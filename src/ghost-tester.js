@@ -2,6 +2,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
+const { OllamaClient } = require('./ollama-client');
 
 class GhostTester {
   constructor(config, callbacks) {
@@ -12,6 +13,8 @@ class GhostTester {
       maxActions: config.maxActions || 100,
       screenshotOnError: config.screenshotOnError !== false,
       screenshotInterval: config.screenshotInterval || 5000,
+      aiMode: config.aiMode || false,
+      ollamaModel: config.ollamaModel || 'llama3.1:8b',
       ...config
     };
     
@@ -29,6 +32,9 @@ class GhostTester {
     };
     this.visitedUrls = new Set();
     this.actionQueue = [];
+    this.recentActions = [];
+    this.ollama = null;
+    this.aiAvailable = false;
   }
 
   async start() {
@@ -36,6 +42,17 @@ class GhostTester {
     this.stats.startTime = Date.now();
     
     this.log('info', `Starting Ghost QA for ${this.config.url}`);
+    
+    // Initialize Ollama if AI mode is enabled
+    if (this.config.aiMode) {
+      this.ollama = new OllamaClient({ model: this.config.ollamaModel });
+      this.aiAvailable = await this.ollama.isAvailable();
+      if (this.aiAvailable) {
+        this.log('info', `🤖 AI Mode enabled with ${this.config.ollamaModel}`);
+      } else {
+        this.log('warning', '🤖 AI Mode requested but Ollama not available. Falling back to random mode.');
+      }
+    }
     
     try {
       this.browser = await chromium.launch({
@@ -108,6 +125,16 @@ class GhostTester {
   async performRandomAction() {
     if (!this.page || !this.running) return;
     
+    // Try AI-guided action if available
+    if (this.config.aiMode && this.aiAvailable) {
+      const aiAction = await this.performAIGuidedAction();
+      if (aiAction) {
+        this.stats.actionsPerformed++;
+        return;
+      }
+      // Fall back to random if AI fails
+    }
+    
     const actionTypes = [
       { type: 'click', weight: 40 },
       { type: 'fillForm', weight: 25 },
@@ -147,6 +174,143 @@ class GhostTester {
     }
     
     this.stats.actionsPerformed++;
+  }
+
+  async performAIGuidedAction() {
+    try {
+      // Gather page context for the LLM
+      const pageContext = await this.gatherPageContext();
+      
+      // Ask LLM to decide action
+      const decision = await this.ollama.analyzePageAndDecideAction(pageContext);
+      
+      if (!decision || typeof decision.targetIndex !== 'number') {
+        return false;
+      }
+      
+      this.log('ai', `🤖 ${decision.reasoning}`);
+      
+      const elements = pageContext.elementHandles;
+      const targetEl = elements[decision.targetIndex];
+      
+      if (!targetEl) {
+        return false;
+      }
+      
+      switch (decision.action) {
+        case 'click':
+          await targetEl.click({ timeout: 5000 });
+          this.trackAction(`AI clicked: ${pageContext.elements[decision.targetIndex]?.text?.slice(0, 30) || 'element'}`);
+          break;
+          
+        case 'fill':
+          const fillValue = decision.fillValue || 'AI Test Input';
+          await targetEl.fill(fillValue);
+          this.trackAction(`AI filled: ${pageContext.elements[decision.targetIndex]?.name || 'field'} with "${fillValue.slice(0, 20)}"`);
+          this.stats.formsSubmitted++;
+          break;
+          
+        case 'navigate':
+          await targetEl.click({ timeout: 5000 });
+          await this.page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+          this.trackAction(`AI navigated via: ${pageContext.elements[decision.targetIndex]?.text?.slice(0, 30) || 'link'}`);
+          const currentUrl = this.page.url();
+          if (!this.visitedUrls.has(currentUrl)) {
+            this.visitedUrls.add(currentUrl);
+            this.stats.pagesVisited++;
+          }
+          break;
+          
+        case 'hover':
+          await targetEl.hover();
+          this.trackAction(`AI hovered: ${pageContext.elements[decision.targetIndex]?.text?.slice(0, 30) || 'element'}`);
+          break;
+          
+        case 'scroll':
+          await this.randomScroll();
+          break;
+          
+        default:
+          return false;
+      }
+      
+      return true;
+    } catch (err) {
+      this.log('warning', `AI action failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  async gatherPageContext() {
+    const url = this.page.url();
+    const title = await this.page.title();
+    
+    // Get visible text (truncated)
+    const visibleText = await this.page.evaluate(() => {
+      return document.body?.innerText?.slice(0, 1000) || '';
+    });
+    
+    // Get interactive elements
+    const interactiveSelectors = 'button, a, input, textarea, select, [role="button"], [onclick], .clickable';
+    const elementHandles = await this.page.$$(interactiveSelectors);
+    
+    const elements = [];
+    const validHandles = [];
+    
+    for (const el of elementHandles) {
+      try {
+        const isVisible = await el.isVisible();
+        const isEnabled = await el.isEnabled();
+        
+        if (!isVisible || !isEnabled) continue;
+        
+        const info = await el.evaluate(node => {
+          const text = node.textContent?.trim().slice(0, 50) || '';
+          const lowerText = text.toLowerCase();
+          
+          // Skip dangerous elements
+          if (lowerText.includes('delete') || lowerText.includes('remove') || lowerText.includes('destroy')) {
+            return null;
+          }
+          
+          return {
+            type: node.tagName.toLowerCase(),
+            text,
+            name: node.name || node.getAttribute('name') || node.getAttribute('aria-label') || '',
+            placeholder: node.placeholder || '',
+            inputType: node.type || '',
+            href: node.href || ''
+          };
+        });
+        
+        if (info) {
+          elements.push(info);
+          validHandles.push(el);
+        }
+      } catch (e) {
+        // Element may have been removed
+      }
+      
+      // Limit to 30 elements to keep prompt manageable
+      if (elements.length >= 30) break;
+    }
+    
+    return {
+      url,
+      title,
+      visibleText,
+      elements,
+      elementHandles: validHandles,
+      recentActions: this.recentActions.slice(-10)
+    };
+  }
+
+  trackAction(description) {
+    this.recentActions.push(description);
+    if (this.recentActions.length > 20) {
+      this.recentActions.shift();
+    }
+    this.log('action', description);
   }
 
   async clickRandomElement() {

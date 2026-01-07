@@ -248,6 +248,7 @@ const logColors = {
   action: '#60a5fa',
   navigation: '#a78bfa',
   info: '#a0a0a0',
+  ai: '#f472b6',
 };
 
 function App() {
@@ -258,6 +259,8 @@ function App() {
     maxActions: 100,
     screenshotOnError: true,
     screenshotInterval: 5000,
+    aiMode: false,
+    ollamaModel: 'llama3.1:8b',
   });
   const [stats, setStats] = useState({
     actionsPerformed: 0,
@@ -442,6 +445,52 @@ function App() {
                   </label>
                 </div>
               </div>
+            </div>
+
+            {/* AI Mode Section */}
+            <div style={{
+              padding: '16px',
+              background: 'linear-gradient(135deg, rgba(244, 114, 182, 0.1), rgba(168, 85, 247, 0.1))',
+              borderRadius: '8px',
+              border: '1px solid rgba(244, 114, 182, 0.3)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '18px' }}>🤖</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#f472b6' }}>AI Mode</span>
+                </div>
+                <div style={styles.checkboxGroup}>
+                  <input
+                    type="checkbox"
+                    id="aiMode"
+                    checked={config.aiMode}
+                    onChange={(e) => setConfig({ ...config, aiMode: e.target.checked })}
+                    style={{ width: '18px', height: '18px', accentColor: '#f472b6' }}
+                  />
+                  <label htmlFor="aiMode" style={{ fontSize: '13px', color: '#a0a0a0' }}>
+                    Enable
+                  </label>
+                </div>
+              </div>
+              <p style={{ fontSize: '11px', color: '#a0a0a0', marginBottom: config.aiMode ? '12px' : '0' }}>
+                Uses local Ollama LLM to intelligently explore your app instead of random clicking.
+              </p>
+              {config.aiMode && (
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Ollama Model</label>
+                  <select
+                    style={{ ...styles.input, cursor: 'pointer' }}
+                    value={config.ollamaModel}
+                    onChange={(e) => setConfig({ ...config, ollamaModel: e.target.value })}
+                  >
+                    <option value="llama3.1:8b">Llama 3.1 8B (Recommended)</option>
+                    <option value="mistral:7b">Mistral 7B</option>
+                    <option value="qwen2:7b">Qwen2 7B</option>
+                    <option value="gemma:7b">Gemma 7B</option>
+                    <option value="phi3:latest">Phi-3</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             <button

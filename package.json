@@ -4,7 +4,7 @@
   "description": "Autonomous QA bot that tests your local web apps in the background",
   "main": "src/main.js",
   "scripts": {
-    "start": "npm run build && electron .",
+    "start": "npm run build && electron . --no-sandbox",
     "dev": "concurrently \"npm run watch\" \"NODE_ENV=development electron .\"",
     "build": "esbuild src/renderer/App.jsx --bundle --outfile=src/renderer/dist/bundle.js --loader:.jsx=jsx",
     "watch": "esbuild src/renderer/App.jsx --bundle --outfile=src/renderer/dist/bundle.js --loader:.jsx=jsx --watch",

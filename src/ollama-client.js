@@ -94,24 +94,31 @@ class OllamaClient {
    * Analyze page and decide next action
    */
   async analyzePageAndDecideAction(pageContext) {
+    // Extract recently clicked element texts to explicitly exclude them
+    const recentlyClicked = pageContext.recentActions
+      ?.filter(a => a.includes('clicked:') || a.includes('navigated'))
+      ?.map(a => a.replace(/^AI (clicked|navigated via): /, '').trim())
+      ?.slice(-5) || [];
+    
     const prompt = `You are an autonomous QA tester. Analyze this web page and decide the best action to test it.
 
 PAGE CONTEXT:
 - URL: ${pageContext.url}
 - Title: ${pageContext.title}
-- Visible Text (truncated): ${pageContext.visibleText?.slice(0, 500) || 'N/A'}
 
 INTERACTIVE ELEMENTS:
 ${pageContext.elements.map((el, i) => `${i}. [${el.type}] "${el.text}" ${el.name ? `(name: ${el.name})` : ''}`).join('\n')}
 
-RECENT ACTIONS:
-${pageContext.recentActions?.slice(-5).join('\n') || 'None yet'}
+RECENTLY CLICKED (DO NOT CLICK THESE AGAIN):
+${recentlyClicked.length > 0 ? recentlyClicked.map(t => `- "${t}"`).join('\n') : 'None'}
 
-RULES:
-- NEVER click delete/remove/destroy buttons
-- Prefer unexplored elements
-- Fill forms with realistic test data
-- Try to trigger edge cases and errors
+CRITICAL RULES:
+1. **NEVER** click an element that appears in RECENTLY CLICKED list above
+2. **NEVER** click delete/remove/destroy buttons
+3. **MUST** choose a DIFFERENT element than recent actions
+4. If you've clicked something 2+ times, move to a completely different part of the page
+5. Prefer navigation links, form inputs, or buttons you haven't tried
+6. If stuck, try scrolling or navigating to a different page
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {

@@ -188,6 +188,30 @@ class GhostTester {
         return false;
       }
       
+      // Check if we're stuck clicking the same thing
+      const targetText = pageContext.elements[decision.targetIndex]?.text?.slice(0, 30) || 'element';
+      const recentClicks = this.recentActions.filter(a => a.includes(targetText)).length;
+      
+      if (recentClicks >= 2) {
+        this.log('warning', `🔄 Stuck on "${targetText}" - forcing navigation or scroll`);
+        // Force a different action - try to navigate away or scroll
+        const links = pageContext.elements.filter(el => el.type === 'a' && el.href);
+        if (links.length > 0) {
+          const randomLink = Math.floor(Math.random() * links.length);
+          const linkIndex = pageContext.elements.indexOf(links[randomLink]);
+          if (linkIndex >= 0 && pageContext.elementHandles[linkIndex]) {
+            await pageContext.elementHandles[linkIndex].click({ timeout: 5000 }).catch(() => {});
+            await this.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+            this.trackAction(`AI escaped via: ${links[randomLink].text?.slice(0, 30) || 'link'}`);
+            return true;
+          }
+        }
+        // Fallback to scroll
+        await this.randomScroll();
+        this.trackAction('AI scrolled to find new elements');
+        return true;
+      }
+      
       this.log('ai', `🤖 ${decision.reasoning}`);
       
       const elements = pageContext.elementHandles;
@@ -200,7 +224,7 @@ class GhostTester {
       switch (decision.action) {
         case 'click':
           await targetEl.click({ timeout: 5000 });
-          this.trackAction(`AI clicked: ${pageContext.elements[decision.targetIndex]?.text?.slice(0, 30) || 'element'}`);
+          this.trackAction(`AI clicked: ${targetText}`);
           break;
           
         case 'fill':
